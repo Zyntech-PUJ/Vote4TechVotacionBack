@@ -1,0 +1,24 @@
+# docker-compose para levantar CouchDB en la VM del backend (10.43.100.131).
+# Solo gestiona CouchDB; el VotacionBack corre directamente con Maven.
+#
+# Primera vez:
+#   docker compose -f docker/docker-compose.couchdb.yml up -d
+#
+# Para ver logs:
+#   docker logs vote4tech-couchdb
+
+services:
+  couchdb:
+    image: couchdb:3
+    container_name: vote4tech-couchdb
+    environment:
+      COUCHDB_USER: admin
+      COUCHDB_PASSWORD: admin123
+    ports:
+      - "5984:5984"
+    volumes:
+      - couchdb_data:/opt/couchdb/data
+    restart: unless-stopped
+
+volumes:
+  couchdb_data:
