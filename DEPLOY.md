@@ -1,392 +1,482 @@
-# Guía de Despliegue — VotacionBack
+﻿# Guía de Despliegue — VotacionBack
 
-Este documento describe el despliegue de **VotacionBack** (Spring Boot) en el VM de backends compartido con RegistraduriaBack.
+Este documento describe **todo lo necesario** para desplegar VotacionBack sin problemas, incluyendo los errores conocidos que ya ocurrieron y cómo resolverlos.
 
----
-
-## Infraestructura Completa del Sistema
-
-| Servicio               | VM Producción    | VM QA            | Puerto |
-|------------------------|------------------|------------------|--------|
-| RegistraduriaFront     | `10.43.97.237`   | `10.43.97.232`   | `80`   |
-| **VotacionFront**      | `10.43.97.237`   | `10.43.97.232`   | `4201` |
-| RegistraduriaBack      | `10.43.100.131`  | `10.43.99.3`     | `8080` |
-| **VotacionBack**       | `10.43.100.131`  | `10.43.99.3`     | `8081` |
-| PostgreSQL             | `10.43.101.13`   | `10.43.98.254`   | `5432` |
-| CouchDB                | `10.43.101.13`   | `10.43.98.254`   | `5984` |
-
-> Todos los servicios corren como **contenedores Docker**. Los dos backends comparten la VM de backends en puertos distintos (8080 y 8081); las bases de datos comparten otro VM (PostgreSQL en 5432, CouchDB en 5984).
-
-El acceso externo se realiza mediante **Cloudflare Quick Tunnel** (URL temporal generada automáticamente en cada arranque).
+> **VotacionBack** es una aplicación Spring Boot que corre en el VM de backends (`10.43.100.131`) en el **puerto 8081**.
 
 ---
 
-## Acceso a los VMs
+## Infraestructura del Sistema
 
-### SSH
-
-```bash
-ssh estudiante@10.43.101.13    # VM Bases de datos
-ssh estudiante@10.43.100.131   # VM Backends
-ssh estudiante@10.43.97.237    # VM Frontends
-```
-
-En Windows, abrir **PowerShell** o **CMD** para usar `ssh` (ya viene instalado en Windows 10/11).
-
-### Escritorio Remoto (RDP / xrdp)
-
-1. `Win + R` → `mstsc` → ingresar la IP del VM deseado
-2. Usuario: `estudiante`, contraseña del VM
-3. Abrir una terminal desde el escritorio
+| Servicio               | VM Producción    | Puerto |
+|------------------------|------------------|--------|
+| RegistraduriaFront     | `10.43.97.237`   | `8090` |
+| VotacionFront          | `10.43.97.237`   | `4201` |
+| RegistraduriaBack      | `10.43.100.131`  | `8080` |
+| **VotacionBack**       | `10.43.100.131`  | `8081` |
+| PostgreSQL             | `10.43.101.13`   | `5432` |
+| CouchDB                | `10.43.101.13`   | `5984` |
 
 ---
 
-## Pre-requisitos
+## Archivo Crítico: `SecurityConfig.java`
 
-**Docker y Docker Compose** deben estar instalados en los tres VMs. Verificar en cada uno:
+> **Este archivo es obligatorio.** Sin él, Spring Boot activa su formulario de login por defecto y todas las peticiones POST al backend devuelven 302 (redirección a página de login HTML) en lugar de la respuesta JSON esperada. El frontend no puede autenticar usuarios.
+
+**Ruta:** `src/main/java/PortalVotacionBack/config/SecurityConfig.java`
+
+**Contenido completo:**
+
+```java
+package PortalVotacionBack.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.web.SecurityFilterChain;
+
+@Configuration
+@EnableWebSecurity
+public class SecurityConfig {
+
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(session ->
+                session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .formLogin(form -> form.disable())
+            .httpBasic(basic -> basic.disable())
+            .authorizeHttpRequests(auth -> auth.anyRequest().permitAll());
+        return http.build();
+    }
+}
+```
+
+**Verificar que existe antes de desplegar:**
 
 ```bash
-docker --version
-docker compose version
+ls ~/Vote4TechVotacionBack/src/main/java/PortalVotacionBack/config/SecurityConfig.java
 ```
+
+Si no existe, crearlo con el contenido de arriba o copiarlo desde tu PC con `scp` (ver Paso 3).
 
 ---
 
-## Paso 1 — VM de Bases de Datos (`10.43.101.13`)
+## Variables de Entorno Críticas
 
-> Este paso es compartido con RegistraduriaBack. Si el VM de BDs ya está levantado y los contenedores corren, pasar directamente al Paso 2.
+| Variable | Descripción |
+|----------|-------------|
+| `SPRING_DATASOURCE_URL` | URL de PostgreSQL |
+| `COUCHDB_URL` | URL de CouchDB para almacenar votos |
+| `CORS_ALLOWED_ORIGINS` | Orígenes permitidos — incluir IP y Cloudflare |
+| `JWT_SECRET` | Clave para firmar JWT |
 
-Conectarse por SSH:
-
-```bash
-ssh estudiante@10.43.101.13
-```
-
-### 1.1 Crear el directorio y archivo de configuración
-
-```bash
-mkdir -p ~/vote4tech-db
-cat > ~/vote4tech-db/docker-compose.db.yml << 'EOF'
-services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: vote4tech-postgres
-    environment:
-      POSTGRES_DB: bd_nacional_vote4tech
-      POSTGRES_USER: admin_db_nacional
-      POSTGRES_PASSWORD: "12345"
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    restart: unless-stopped
-
-  couchdb:
-    image: couchdb:3
-    container_name: vote4tech-couchdb
-    environment:
-      COUCHDB_USER: admin
-      COUCHDB_PASSWORD: admin123
-    ports:
-      - "5984:5984"
-    volumes:
-      - couchdb_data:/opt/couchdb/data
-    restart: unless-stopped
-
-volumes:
-  postgres_data:
-  couchdb_data:
-EOF
-```
-
-### 1.2 Levantar las bases de datos
-
-```bash
-cd ~/vote4tech-db
-docker compose -f docker-compose.db.yml up -d
-```
-
-Verificar que ambos contenedores están corriendo:
-
-```bash
-docker ps
-```
-
-Deben aparecer `vote4tech-postgres` y `vote4tech-couchdb`.
-
-Verificar CouchDB:
-
-```bash
-curl http://localhost:5984/
-# debe devolver: {"couchdb":"Welcome",...}
-```
-
-### 1.3 Crear bases de datos en CouchDB (solo la primera vez)
-
-```bash
-curl -X PUT http://admin:admin123@localhost:5984/votos_urna
-curl -X PUT http://admin:admin123@localhost:5984/votos_domicilio
-```
+> **`CORS_ALLOWED_ORIGINS` debe incluir siempre:**
+> 1. `http://10.43.97.237:4201` — acceso directo por IP
+> 2. La URL de Cloudflare actual de VotacionFront
 
 ---
 
-## Paso 2 — VotacionBack (`10.43.100.131`, puerto 8081)
+## Despliegue Completo (Primera Vez)
 
-Conectarse por SSH al VM de backends:
+### Prerequisitos
 
-```bash
-ssh estudiante@10.43.100.131
-```
+- PostgreSQL corriendo en `10.43.101.13:5432`
+- CouchDB corriendo en `10.43.101.13:5984`
+- Acceso SSH al VM `10.43.100.131`
 
-Verificar que el puerto 8081 está libre (VotacionBack no debe tener servicios systemd antiguos):
-
-```bash
-sudo ss -tlnp | grep 8081
-```
-
-Si hay algún proceso, detenerlo:
+### Paso 1 — Limpiar contenedores anteriores (VM `10.43.100.131`)
 
 ```bash
-sudo kill -9 $(sudo lsof -t -i:8081)
+docker rm -f vote4tech-votacion-back
 ```
 
-### 2.1 Subir el código
-
-**Opción A — git:**
+### Paso 2 — Clonar el repositorio (VM `10.43.100.131`)
 
 ```bash
 cd ~
-git clone <URL_DEL_REPOSITORIO> Vote4TechVotacionBack
-# o si ya existe:
-cd ~/Vote4TechVotacionBack && git pull
+git clone https://github.com/Zyntech-PUJ/Vote4TechVotacionBack.git
 ```
 
-**Opción B — PowerShell local (Windows):**
-
-```powershell
-robocopy "C:\ruta\al\Vote4TechVotacionBack" "$env:TEMP\vback-deploy" /E /XD target .git
-scp -r "$env:TEMP\vback-deploy" estudiante@10.43.100.131:~/Vote4TechVotacionBack
-```
-
-### 2.2 Configurar variables de entorno
-
-Editar `docker/docker-compose.prod.yml`. El único valor que cambia en cada despliegue es `CORS_ALLOWED_ORIGINS` (se actualiza en el Paso 3 con el URL real de Cloudflare):
-
-```bash
-nano ~/Vote4TechVotacionBack/docker/docker-compose.prod.yml
-```
-
-Variables pre-configuradas para producción:
-
-```yaml
-DB_URL: jdbc:postgresql://10.43.101.13:5432/bd_nacional_vote4tech
-DB_USER: admin_db_nacional
-DB_PASSWORD: "12345"
-CORS_ALLOWED_ORIGINS: "http://10.43.97.237:4201,https://TU_URL.trycloudflare.com"
-COUCHDB_URL: http://10.43.101.13:5984
-COUCHDB_USER: admin
-COUCHDB_PASSWORD: admin123
-COUCHDB_DB_URNA: votos_urna
-COUCHDB_DB_DOMICILIO: votos_domicilio
-```
-
-> **Primera vez:** dejar `CORS_ALLOWED_ORIGINS` con un valor temporal; se actualiza después del Paso 3.
-> **Nota:** CouchDB corre en el VM de BDs (`10.43.101.13:5984`), no en el VM de backends.
-
-### 2.3 Levantar el contenedor
-
-```bash
-cd ~/Vote4TechVotacionBack
-docker compose -f docker/docker-compose.prod.yml up -d --build
-```
-
-Verificar que levantó correctamente:
-
-```bash
-docker ps
-docker logs vote4tech-votacion-back --tail=20
-```
-
-Debe aparecer al final: `Started PortalVotacionBackApplication in X.X seconds`
-
----
-
-## Paso 3 — Cloudflare URL y CORS
-
-El túnel de Cloudflare lo gestiona el contenedor `vote4tech-votacion-cloudflared` de VotacionFront. Después de desplegarlo (ver `DEPLOY.md` en `Vote4TechVotacionFront`), obtener el URL desde el VM Frontend:
-
-```bash
-# Ejecutar en el VM 10.43.97.237:
-docker logs vote4tech-votacion-cloudflared 2>&1 | grep trycloudflare
-```
-
-El URL tiene la forma `https://xxxx-xxxx-xxxx-xxxx.trycloudflare.com`.
-
-### 3.1 Actualizar CORS
-
-De vuelta en el VM Backend (`10.43.100.131`), editar y reconstruir:
-
-```bash
-nano ~/Vote4TechVotacionBack/docker/docker-compose.prod.yml
-# Actualizar CORS_ALLOWED_ORIGINS con el URL real
-
-cd ~/Vote4TechVotacionBack
-docker compose -f docker/docker-compose.prod.yml up -d --build
-```
-
----
-
-## Paso 4 — Verificar el despliegue
-
-Desde el VM Backend (verifica que el API responde directamente):
-
-```bash
-curl http://localhost:8081/eleccion/activa
-```
-
-Desde el VM Frontend (verifica el API gateway de nginx):
-
-```bash
-curl http://localhost:4201/api/eleccion/activa
-```
-
-Ambos deben devolver un JSON con la elección activa (o vacío si no hay ninguna).
-
----
-
-## Actualizar el Despliegue con Nuevos Cambios
-
-Conectarse al VM Backend (`10.43.100.131`):
-
-**Opción A — git:**
+Si la carpeta ya existe:
 
 ```bash
 cd ~/Vote4TechVotacionBack
 git pull
-docker compose -f docker/docker-compose.prod.yml up -d --build
 ```
 
-**Opción B — código manual (desde PowerShell local):**
+### Paso 3 — Asegurar que `SecurityConfig.java` existe
+
+**Opción A — Copiar desde tu PC (PowerShell):**
+
+El archivo debe existir localmente en:
+`C:\...\Vote4TechVotacionBack\src\main\java\PortalVotacionBack\config\SecurityConfig.java`
+
+Si existe, copiarlo al VM:
 
 ```powershell
-robocopy "C:\ruta\al\Vote4TechVotacionBack" "$env:TEMP\vback-deploy" /E /XD target .git
-scp -r "$env:TEMP\vback-deploy" estudiante@10.43.100.131:~/Vote4TechVotacionBack
+$base = "C:\Users\javie\OneDrive\Documentos\unijaveriana\SEMESTRE 7\Arquitectura de Software\Vote4TechVotacionBack"
+scp "$base\src\main\java\PortalVotacionBack\config\SecurityConfig.java" estudiante@10.43.100.131:~/Vote4TechVotacionBack/src/main/java/PortalVotacionBack/config/SecurityConfig.java
 ```
 
-Luego en el VM:
+**Opción B — Crear directamente en el VM:**
 
 ```bash
-cd ~/Vote4TechVotacionBack
-docker compose -f docker/docker-compose.prod.yml up -d --build
+mkdir -p ~/Vote4TechVotacionBack/src/main/java/PortalVotacionBack/config
+cat > ~/Vote4TechVotacionBack/src/main/java/PortalVotacionBack/config/SecurityConfig.java << 'EOF'
+package PortalVotacionBack.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.web.SecurityFilterChain;
+
+@Configuration
+@EnableWebSecurity
+public class SecurityConfig {
+
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(session ->
+                session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .formLogin(form -> form.disable())
+            .httpBasic(basic -> basic.disable())
+            .authorizeHttpRequests(auth -> auth.anyRequest().permitAll());
+        return http.build();
+    }
+}
+EOF
 ```
 
-> `--build` es obligatorio. Sin él, Docker usa la imagen cacheada y los cambios no se aplican.
+### Paso 4 — Configurar y copiar el docker-compose
 
----
-
-## Ambiente QA
-
-El ambiente QA usa VMs distintas. Los pasos son idénticos, cambiando solo las IPs.
-
-| Servicio               | VM Producción    | VM QA            | Puerto |
-|------------------------|------------------|------------------|--------|
-| RegistraduriaFront     | `10.43.97.237`   | `10.43.97.232`   | `80`   |
-| VotacionFront          | `10.43.97.237`   | `10.43.97.232`   | `4201` |
-| RegistraduriaBack      | `10.43.100.131`  | `10.43.99.3`     | `8080` |
-| VotacionBack           | `10.43.100.131`  | `10.43.99.3`     | `8081` |
-| PostgreSQL             | `10.43.101.13`   | `10.43.98.254`   | `5432` |
-| CouchDB                | `10.43.101.13`   | `10.43.98.254`   | `5984` |
-
-### Cambios en VM de BDs QA (`10.43.98.254`)
-
-Seguir el Paso 1 con esta IP en lugar de `10.43.101.13`.
-
-### Cambios en VM Backend QA (`10.43.99.3`)
-
-En `docker/docker-compose.prod.yml`, cambiar:
+**Desde tu PC (PowerShell)**, editar `Vote4TechVotacionBack\docker\docker-compose.prod.yml` con las variables correctas:
 
 ```yaml
-DB_URL: jdbc:postgresql://10.43.98.254:5432/bd_nacional_vote4tech
-CORS_ALLOWED_ORIGINS: "http://10.43.97.232:4201,https://URL_QA.trycloudflare.com"
-COUCHDB_URL: http://10.43.98.254:5984
+environment:
+  SPRING_DATASOURCE_URL: "jdbc:postgresql://10.43.101.13:5432/votacion"
+  CORS_ALLOWED_ORIGINS: "http://10.43.97.237:4201,https://TU_URL_CLOUDFLARE.trycloudflare.com"
 ```
 
-Luego reconstruir:
+> La URL de Cloudflare de VotacionFront se obtiene con:
+> ```bash
+> docker logs vote4tech-votacion-cloudflared 2>&1 | grep trycloudflare
+> # (en el VM 10.43.97.237)
+> ```
 
-```bash
-docker compose -f docker/docker-compose.prod.yml up -d --build
+Subir al VM:
+
+```powershell
+$base = "C:\Users\javie\OneDrive\Documentos\unijaveriana\SEMESTRE 7\Arquitectura de Software\Vote4TechVotacionBack"
+scp "$base\docker\docker-compose.prod.yml" estudiante@10.43.100.131:~/Vote4TechVotacionBack/docker/docker-compose.prod.yml
 ```
 
-### Cambios en VM Frontend QA (`10.43.97.232`)
-
-En `docker/nginx.conf` de VotacionFront, cambiar el `proxy_pass`:
-
-```nginx
-# De:
-proxy_pass http://10.43.100.131:8081/;
-# A:
-proxy_pass http://10.43.99.3:8081/;
-```
-
-Reconstruir:
-
-```bash
-cd ~/Vote4TechVotacionFront
-docker compose -f docker/docker-compose.prod.yml up -d --build
-```
-
-> Obtener el nuevo URL de Cloudflare del VM Frontend QA y actualizar `CORS_ALLOWED_ORIGINS` en el backend QA.
-
----
-
-## Troubleshooting
-
-### El contenedor no levanta / se reinicia constantemente
-
-```bash
-docker logs vote4tech-votacion-back --tail=50
-```
-
-Causas comunes:
-- `DB_URL` incorrecto → verificar que PostgreSQL está corriendo en `10.43.101.13:5432`
-- `COUCHDB_URL` incorrecto → verificar que CouchDB está corriendo en `10.43.101.13:5984`
-- `CORS_ALLOWED_ORIGINS` con formato incorrecto
-
-### Puerto 8081 ocupado
-
-```bash
-sudo ss -tlnp | grep 8081
-sudo kill -9 $(sudo lsof -t -i:8081)
-```
-
-### No conecta a CouchDB
-
-Verificar desde el VM Backend:
-
-```bash
-curl http://10.43.101.13:5984/
-```
-
-Si no conecta, verificar que el contenedor CouchDB está corriendo en `10.43.101.13`.
-
-### No conecta a PostgreSQL
-
-```bash
-nc -zv 10.43.101.13 5432
-```
-
-### El URL de Cloudflare cambió
-
-El URL cambia cada vez que el contenedor `vote4tech-votacion-cloudflared` se reinicia.
-
-1. Obtener el nuevo URL desde el VM Frontend: `docker logs vote4tech-votacion-cloudflared 2>&1 | grep trycloudflare`
-2. Actualizar `CORS_ALLOWED_ORIGINS` en `docker/docker-compose.prod.yml`
-3. `docker compose -f docker/docker-compose.prod.yml up -d --build`
-
-### Reconstruir completamente
+### Paso 5 — Construir y levantar (VM `10.43.100.131`)
 
 ```bash
 cd ~/Vote4TechVotacionBack
+docker compose -f docker/docker-compose.prod.yml up -d --build
+```
+
+> **`--build` es obligatorio** — VotacionBack es Java y necesita compilarse con Maven dentro del contenedor.
+
+Ver progreso:
+
+```bash
+docker logs -f vote4tech-votacion-back
+```
+
+Esperar:
+```
+Started VotacionBackApplication in X.XXX seconds
+```
+
+Verificar:
+
+```bash
+docker ps | grep votacion-back
+curl http://localhost:8081/eleccion/activa
+```
+
+---
+
+## Actualizar solo Variables de Entorno (sin recompilar)
+
+Cuando solo cambia `CORS_ALLOWED_ORIGINS` u otra variable:
+
+1. Editar `docker-compose.prod.yml` localmente
+2. Subir con `scp`
+3. En el VM:
+
+```bash
+cd ~/Vote4TechVotacionBack
+docker compose -f docker/docker-compose.prod.yml up -d
+```
+
+> **Sin `--build`** — solo recrea el contenedor con los nuevos env vars.
+
+---
+
+## Actualizar la URL de Cloudflare en CORS (flujo habitual)
+
+1. **Obtener la nueva URL** (VM `10.43.97.237`):
+   ```bash
+   docker logs vote4tech-votacion-cloudflared 2>&1 | grep trycloudflare
+   ```
+
+2. **Editar localmente** `Vote4TechVotacionBack\docker\docker-compose.prod.yml`:
+   ```yaml
+   CORS_ALLOWED_ORIGINS: "http://10.43.97.237:4201,https://NUEVA_URL.trycloudflare.com"
+   ```
+
+3. **Subir al VM** (PowerShell local):
+   ```powershell
+   $base = "C:\Users\javie\OneDrive\Documentos\unijaveriana\SEMESTRE 7\Arquitectura de Software\Vote4TechVotacionBack"
+   scp "$base\docker\docker-compose.prod.yml" estudiante@10.43.100.131:~/Vote4TechVotacionBack/docker/docker-compose.prod.yml
+   ```
+
+4. **Reiniciar** (VM `10.43.100.131`):
+   ```bash
+   cd ~/Vote4TechVotacionBack
+   docker compose -f docker/docker-compose.prod.yml up -d
+   ```
+
+---
+
+## Problemas Conocidos y Soluciones
+
+### Problema: Login devuelve 302 o HTML en lugar de JWT
+
+**Síntoma:** POST a `/login` devuelve código 302 con `Location: /login?error` o devuelve HTML de una página de formulario.
+
+**Causa:** Spring Boot Spring Security activa su formulario de login por defecto cuando hay dependencia de `spring-boot-starter-security` en el `pom.xml`. Cualquier petición no autenticada a un endpoint protegido redirige al formulario.
+
+**Diagnóstico:**
+
+```bash
+curl -v -X POST http://localhost:8081/api/login \
+  -H "Content-Type: application/json" \
+  -d '{"usuario":"test","password":"test"}'
+# Si el response tiene "Location: /login" o es HTML, falta SecurityConfig.java
+```
+
+**Solución:** Crear el archivo `SecurityConfig.java` con el contenido del inicio de este documento (ver sección "Archivo Crítico"). Luego reconstruir:
+
+```bash
+cd ~/Vote4TechVotacionBack
+docker compose -f docker/docker-compose.prod.yml up -d --build
+```
+
+---
+
+### Problema: Error CORS en el navegador
+
+**Síntoma:** `Access to XMLHttpRequest ... has been blocked by CORS policy`.
+
+**Causa:** La URL de Cloudflare de VotacionFront cambió y no está en `CORS_ALLOWED_ORIGINS`.
+
+**Solución:** Seguir el flujo "Actualizar la URL de Cloudflare en CORS" descrito arriba.
+
+---
+
+### Problema: Contenedor reinicia en bucle
+
+**Diagnóstico:**
+
+```bash
+docker logs vote4tech-votacion-back --tail=30
+```
+
+**Causas comunes:**
+- No puede conectar a PostgreSQL o CouchDB
+- `SecurityConfig.java` tiene error de compilación (falta import, typo)
+- Variable de entorno mal configurada
+
+```bash
+# Verificar conectividad
+curl -v telnet://10.43.101.13:5432
+curl -v telnet://10.43.101.13:5984
+```
+
+---
+
+### Problema: `git pull` borra el `SecurityConfig.java`
+
+**Causa:** Si `SecurityConfig.java` fue creado directamente en el VM y no está en el repositorio, `git pull` no lo toca. Sin embargo, si hay un merge que modifica el directorio `config/`, puede haber conflictos.
+
+**Prevención:** Verificar que `SecurityConfig.java` existe **después** de cada `git pull`:
+
+```bash
+ls ~/Vote4TechVotacionBack/src/main/java/PortalVotacionBack/config/
+```
+
+Si no aparece, recrearlo (ver Paso 3 de este documento).
+
+---
+
+### Problema: Cambios de código Java no se reflejan
+
+**Causa:** Se ejecutó `docker compose up -d` sin `--build`. Docker usó la imagen anterior.
+
+**Solución:**
+
+```bash
+docker compose -f docker/docker-compose.prod.yml up -d --build
+```
+
+Si sigue sin reflejar cambios, forzar reconstrucción sin caché:
+
+```bash
+docker compose -f docker/docker-compose.prod.yml build --no-cache
+docker compose -f docker/docker-compose.prod.yml up -d
+```
+
+---
+
+### Problema: Puerto 8081 ya está en uso
+
+```bash
+sudo lsof -i :8081
+sudo fuser -k 8081/tcp
+```
+
+---
+
+## Comandos de Diagnóstico Rápido
+
+```bash
+# Ver todos los contenedores
+docker ps
+
+# Ver logs del backend
+docker logs vote4tech-votacion-back --tail=50
+
+# Ver logs en tiempo real
+docker logs -f vote4tech-votacion-back
+
+# Test rápido del endpoint (sin auth)
+curl http://localhost:8081/eleccion/activa
+
+# Test del login
+curl -X POST http://localhost:8081/ciudadano/login \
+  -H "Content-Type: application/json" \
+  -d '{"cedula":"12345","pin":"1234"}'
+
+# Verificar que SecurityConfig.java existe
+ls ~/Vote4TechVotacionBack/src/main/java/PortalVotacionBack/config/
+
+# Ver variables de entorno del contenedor
+docker inspect vote4tech-votacion-back | grep -A 30 '"Env"'
+
+# Reconstruir desde cero
 docker compose -f docker/docker-compose.prod.yml down
 docker compose -f docker/docker-compose.prod.yml up -d --build
 ```
+
+---
+
+## Cómo Funciona el Build Docker (multi-stage)
+
+El `Dockerfile` tiene **2 etapas**. La primera compila el proyecto Java; la segunda crea la imagen final mínima.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  ETAPA 1: builder  (imagen maven:3.9-eclipse-temurin-21)    │
+│                                                             │
+│  1. COPY pom.xml .                                          │
+│  2. RUN mvn dependency:go-offline  ← descarga deps Maven   │
+│     (cacheado si pom.xml no cambió)                         │
+│  3. COPY src ./src                 ← copia el código Java   │
+│     (incluye SecurityConfig.java si existe)                 │
+│  4. RUN mvn package -DskipTests    ← compila el .jar        │
+│     (si SecurityConfig.java tiene error, FALLA AQUÍ)        │
+│                                                             │
+│  Resultado: /app/target/PortalVotacionBack-0.0.1-SNAPSHOT.jar │
+└──────────────────────┬──────────────────────────────────────┘
+                       │ solo se copia el .jar compilado
+┌──────────────────────▼──────────────────────────────────────┐
+│  ETAPA 2: production  (imagen eclipse-temurin:21-jre-alpine) │
+│                                                             │
+│  1. COPY app.jar .                                          │
+│  2. EXPOSE 8081                                             │
+│  3. ENTRYPOINT ["java", "-jar", "app.jar"]                  │
+│                                                             │
+│  Imagen final: ~200 MB (solo JRE + .jar)                    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Punto crítico para VotacionBack:** `SecurityConfig.java` debe existir en `src/` **antes** del `COPY src ./src` del Dockerfile. Si no está, Maven compila sin él → Spring Security activa el form login → 302 en todos los POST.
+
+**¿Cuándo es obligatorio `--build`?**
+- Cualquier cambio en archivos `.java` (incluyendo agregar `SecurityConfig.java`)
+- Cualquier cambio en `pom.xml`
+
+**¿Cuándo NO hace falta `--build`?**
+- Cuando solo cambian variables de entorno en `docker-compose.prod.yml`
+- `docker compose up -d` recrea el contenedor con los nuevos env vars sin recompilar
+
+**Si el build falla con error de Maven:**
+
+```bash
+# Ver el error completo del build
+docker compose -f docker/docker-compose.prod.yml build 2>&1 | tail -50
+# El error aparece en la sección "ETAPA 1: builder"
+# Errores comunes:
+# - "package PortalVotacionBack.config does not exist" → falta un import en SecurityConfig.java
+# - "cannot find symbol" → typo en el nombre de clase o método
+```
+
+---
+
+## Gestión de Imágenes Docker
+
+```bash
+# Ver todas las imágenes locales
+docker images
+
+# Ver solo la imagen de este proyecto
+docker images | grep vote4tech-votacion
+
+# Eliminar imágenes intermedias sin usar
+docker image prune
+
+# Ver cuánto espacio usa Docker
+docker system df
+
+# Limpieza completa (cuidado: elimina caché de build)
+docker system prune
+```
+
+Flujo cuando el VM se queda sin espacio:
+
+```bash
+# Verificar espacio
+df -h
+
+# Ver desglose de Docker
+docker system df -v
+
+# Liberar solo capas intermedias (seguro)
+docker image prune -f
+```
+
+> La imagen `maven:3.9-eclipse-temurin-21` es la más pesada (~500 MB). Si el disco lo permite, dejarla en caché para que futuros `--build` no descarguen todo desde cero.
+
+---
+
+## Diferencias Importantes vs. RegistraduriaBack
+
+| Aspecto | RegistraduriaBack | VotacionBack |
+|---------|------------------|--------------|
+| Puerto | 8080 | 8081 |
+| Base de datos | Solo PostgreSQL | PostgreSQL + CouchDB |
+| SecurityConfig | No fue necesario fix | **Obligatorio** — Spring redirigía a login |
+| Frontend que consume | RegistraduriaFront (8090) | VotacionFront (4201) |
+| CORS origen IP | `http://10.43.97.237:8090` | `http://10.43.97.237:4201` |
