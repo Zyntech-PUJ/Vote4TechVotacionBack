@@ -19,6 +19,141 @@ Este documento describe **todo lo necesario** para desplegar VotacionBack sin pr
 
 ---
 
+## Ejecución Local
+
+> Para probar el backend sin acceso a los VMs de producción.
+
+### Opción A — Full Docker con `docker-compose.yml` raíz (recomendado)
+
+El `docker-compose.yml` de la **raíz del workspace** levanta toda la infraestructura local:
+
+```bash
+# Desde la carpeta raíz ("Arquitectura de Software")
+docker compose up -d
+```
+
+Este backend queda disponible en **`http://localhost:8081`**.
+
+Las credenciales usadas por el compose raíz son:
+
+```
+DB_URL:               jdbc:postgresql://postgres:5432/vote4tech
+DB_USER:              postgres
+DB_PASSWORD:          postgres123
+CORS_ALLOWED_ORIGINS: http://localhost:4200,http://localhost:4201
+COUCHDB_URL:          http://couchdb:5984
+COUCHDB_USER:         admin
+COUCHDB_PASSWORD:     admin123
+COUCHDB_DB_URNA:      votos_urna
+COUCHDB_DB_DOMICILIO: votos_domicilio
+```
+
+> Distintas a producción. Spring Boot crea el schema automáticamente con `ddl-auto=update`. El seed puebla las tablas si están vacías.
+
+**Primera vez — crear las bases de CouchDB** (solo si las creas manualmente, el compose no las crea solo):
+
+```bash
+curl -X PUT http://admin:admin123@localhost:5984/votos_urna
+curl -X PUT http://admin:admin123@localhost:5984/votos_domicilio
+# Verificar:
+curl http://admin:admin123@localhost:5984/_all_dbs
+```
+
+Para ver los logs:
+
+```bash
+docker compose logs -f votacion-back
+```
+
+Para reconstruir (si hubo cambios de código Java o se agregó `SecurityConfig.java`):
+
+```bash
+docker compose up -d --build votacion-back
+```
+
+> ⚠ `SecurityConfig.java` debe existir en `src/` **antes** de ejecutar `--build`.
+> El compose raíz hace `build: context: ./Vote4TechVotacionBack`, lo que significa que copia el `src/` local.
+> Si el archivo no existe en tu máquina local, créalo antes de construir (ver sección siguiente).
+
+---
+
+### Opción B — `mvn spring-boot:run` directo (para desarrollo Java)
+
+**Paso 1 — Levantar solo DBs:**
+
+```bash
+# Desde la carpeta raíz del workspace
+docker compose up -d postgres couchdb
+```
+
+PostgreSQL: `localhost:5432`, DB: `vote4tech`, user: `postgres`, pass: `postgres123`.
+CouchDB: `localhost:5984`, user: `admin`, pass: `admin123`.
+
+Crear las bases de CouchDB si es la primera vez:
+
+```bash
+curl -X PUT http://admin:admin123@localhost:5984/votos_urna
+curl -X PUT http://admin:admin123@localhost:5984/votos_domicilio
+```
+
+**Paso 2 — Verificar que `SecurityConfig.java` existe:**
+
+```bash
+ls src/main/java/PortalVotacionBack/config/SecurityConfig.java
+```
+
+Si no existe, crearlo (ver sección "Archivo Crítico" más adelante en este documento).
+
+**Paso 3 — Exportar variables de entorno y arrancar:**
+
+En Linux/Mac:
+
+```bash
+cd Vote4TechVotacionBack
+export DB_URL="jdbc:postgresql://localhost:5432/vote4tech"
+export DB_USER="postgres"
+export DB_PASSWORD="postgres123"
+export CORS_ALLOWED_ORIGINS="http://localhost:4201"
+export COUCHDB_URL="http://localhost:5984"
+export COUCHDB_USER="admin"
+export COUCHDB_PASSWORD="admin123"
+export COUCHDB_DB_URNA="votos_urna"
+export COUCHDB_DB_DOMICILIO="votos_domicilio"
+mvn spring-boot:run
+```
+
+En Windows (PowerShell):
+
+```powershell
+cd Vote4TechVotacionBack
+$env:DB_URL = "jdbc:postgresql://localhost:5432/vote4tech"
+$env:DB_USER = "postgres"
+$env:DB_PASSWORD = "postgres123"
+$env:CORS_ALLOWED_ORIGINS = "http://localhost:4201"
+$env:COUCHDB_URL = "http://localhost:5984"
+$env:COUCHDB_USER = "admin"
+$env:COUCHDB_PASSWORD = "admin123"
+$env:COUCHDB_DB_URNA = "votos_urna"
+$env:COUCHDB_DB_DOMICILIO = "votos_domicilio"
+mvn spring-boot:run
+```
+
+El backend arranca en `http://localhost:8081`.
+
+**Verificar que arrancó correctamente:**
+
+```bash
+curl http://localhost:8081/eleccion/activas
+# Debe devolver un array JSON
+```
+
+> Las variables de CouchDB tienen valores por defecto en `application.properties`
+> (`:http://localhost:5984`, `:admin`, `:admin`, `:votos_urna`, `:votos_domicilio`),
+> por lo que técnicamente son opcionales si CouchDB corre en localhost con esas credenciales.
+> `DB_URL`, `DB_USER`, `DB_PASSWORD` y `CORS_ALLOWED_ORIGINS` **no tienen default** y son obligatorias.
+
+---
+
 ## Archivo Crítico: `SecurityConfig.java`
 
 > **Este archivo es obligatorio.** Sin él, Spring Boot activa su formulario de login por defecto y todas las peticiones POST al backend devuelven 302 (redirección a página de login HTML) en lugar de la respuesta JSON esperada. El frontend no puede autenticar usuarios.
