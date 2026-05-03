@@ -1,9 +1,7 @@
 package PortalVotacionBack.couchdb;
 
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.Base64;
-import java.util.List;
 import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -12,7 +10,6 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
@@ -101,33 +98,5 @@ public class CouchDbService {
     }
   }
 
-  /**
-   * Recupera todos los documentos de una base de datos CouchDB.
-   * Usa _all_docs?include_docs=true para obtener el contenido completo.
-   */
-  public List<JsonNode> getAllDocs(String db) {
-    try {
-      String response = restClient.get()
-          .uri("/" + db + "/_all_docs?include_docs=true")
-          .retrieve()
-          .body(String.class);
-
-      JsonNode root = objectMapper.readTree(response);
-      List<JsonNode> docs = new ArrayList<>();
-      for (JsonNode row : root.path("rows")) {
-        JsonNode doc = row.path("doc");
-        // Ignorar documentos de diseño (_id empieza con _design/)
-        if (!doc.path("_id").asText().startsWith("_design/")) {
-          docs.add(doc);
-        }
-      }
-      return docs;
-    } catch (Exception e) {
-      throw new RuntimeException("Error al leer votos de CouchDB (" + db + "): " + e.getMessage(), e);
-    }
-  }
-
-  public String getDbUrna() { return dbUrna; }
-  public String getDbDomicilio() { return dbDomicilio; }
 
 }

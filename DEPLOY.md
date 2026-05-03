@@ -16,6 +16,9 @@ Este documento describe **todo lo necesario** para desplegar VotacionBack sin pr
 | **VotacionBack**       | `10.43.100.131`  | `8081` |
 | PostgreSQL             | `10.43.101.13`   | `5432` |
 | CouchDB                | `10.43.101.13`   | `5984` |
+| EtlVotacion            | `10.43.101.13`   | `8083` |
+
+> El proceso ETL (extracción de votos de CouchDB → PostgreSQL) fue separado al microservicio **EtlVotacion** (`Vote4TechETLs`), que se despliega en la VM de bases de datos. Para disparar el ETL, ver el DEPLOY.md de ese repositorio.
 
 ---
 
