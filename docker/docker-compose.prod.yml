@@ -28,7 +28,7 @@ services:
       DB_PASSWORD: "12345"
       # CORS: VotacionFront corre en el puerto 4201 del mismo VM de frontends
       # Reemplazar CLOUDFLARE_URL con el URL real obtenido del tunel
-      CORS_ALLOWED_ORIGINS: "http://10.43.97.237:4201,https://REEMPLAZAR_CON_URL_CLOUDFLARE.trycloudflare.com"
+      CORS_ALLOWED_ORIGINS: "http://10.43.97.237:4201,https://earning-gotten-also-disabilities.trycloudflare.com"
       # CouchDB (VM de BDs: 10.43.101.13)
       COUCHDB_URL: http://10.43.101.13:5984
       COUCHDB_USER: admin
