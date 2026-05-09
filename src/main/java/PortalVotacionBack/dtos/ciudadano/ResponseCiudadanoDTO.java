@@ -10,5 +10,6 @@ public class ResponseCiudadanoDTO {
   private String cedula;
   private String genero;
   private Boolean votoObligatorio;
+  private Boolean habilitadoDomicilio;
 
 }

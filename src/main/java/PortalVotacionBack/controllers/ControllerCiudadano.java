@@ -1,5 +1,7 @@
 package PortalVotacionBack.controllers;
 
+import java.util.List;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -24,6 +26,12 @@ public class ControllerCiudadano {
   @Operation(summary = "Verificar ciudadano por cédula")
   public ResponseEntity<ResponseCiudadanoDTO> findByCedula(@PathVariable String cedula) {
     return ResponseEntity.ok(servicesCiudadano.findByCedula(cedula));
+  }
+
+  @GetMapping("/domicilio")
+  @Operation(summary = "Obtener listado de ciudadanos habilitados para voto domiciliario")
+  public ResponseEntity<List<ResponseCiudadanoDTO>> findHabilitadosDomicilio() {
+    return ResponseEntity.ok(servicesCiudadano.findHabilitadosDomicilio());
   }
 
 }

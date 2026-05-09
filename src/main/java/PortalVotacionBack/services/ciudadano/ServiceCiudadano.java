@@ -1,5 +1,8 @@
 package PortalVotacionBack.services.ciudadano;
 
+import java.util.List;
+import java.util.stream.Collectors;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -24,6 +27,14 @@ public class ServiceCiudadano implements IServiceCiudadano {
         .orElseThrow(() -> new ResourceNotFoundException(
             "Ciudadano no encontrado con cédula: " + cedula));
     return mapperCiudadano.toResponseDTO(ciudadano);
+  }
+
+  @Override
+  public List<ResponseCiudadanoDTO> findHabilitadosDomicilio() {
+    return repositoryCiudadano.findByHabilitadoDomicilioTrue()
+        .stream()
+        .map(mapperCiudadano::toResponseDTO)
+        .collect(Collectors.toList());
   }
 
 }

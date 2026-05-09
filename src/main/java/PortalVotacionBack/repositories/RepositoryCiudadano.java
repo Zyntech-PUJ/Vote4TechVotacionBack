@@ -1,5 +1,6 @@
 package PortalVotacionBack.repositories;
 
+import java.util.List;
 import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -11,5 +12,7 @@ import PortalVotacionBack.entities.Ciudadano;
 public interface RepositoryCiudadano extends JpaRepository<Ciudadano, Long> {
 
   Optional<Ciudadano> findByCedula(String cedula);
+
+  List<Ciudadano> findByHabilitadoDomicilioTrue();
 
 }

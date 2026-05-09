@@ -16,6 +16,7 @@ public class MapperCiudadano {
     dto.setCedula(ciudadano.getCedula());
     dto.setGenero(ciudadano.getGenero());
     dto.setVotoObligatorio(ciudadano.getVotoObligatorio());
+    dto.setHabilitadoDomicilio(ciudadano.getHabilitadoDomicilio());
 
     return dto;
   }
