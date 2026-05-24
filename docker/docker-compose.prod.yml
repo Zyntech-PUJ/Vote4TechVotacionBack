@@ -36,3 +36,13 @@ services:
       COUCHDB_DB_URNA: votos_urna
       COUCHDB_DB_DOMICILIO: votos_domicilio
     restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: vote4tech-cloudflared-votacion
+    command: tunnel --no-autoupdate --url http://localhost:8081
+    network_mode: host
+    depends_on:
+      - votacion-back
+    restart: unless-stopped
+    # Ver URL publica: docker logs vote4tech-cloudflared-votacion 2>&1 | grep trycloudflare

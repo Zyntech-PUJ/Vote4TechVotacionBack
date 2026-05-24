@@ -20,5 +20,15 @@ services:
       - couchdb_data:/opt/couchdb/data
     restart: unless-stopped
 
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: vote4tech-cloudflared-couchdb
+    command: tunnel --no-autoupdate --url http://localhost:5984
+    network_mode: host
+    depends_on:
+      - couchdb
+    restart: unless-stopped
+    # Ver URL publica: docker logs vote4tech-cloudflared-couchdb 2>&1 | grep trycloudflare
+
 volumes:
   couchdb_data:
