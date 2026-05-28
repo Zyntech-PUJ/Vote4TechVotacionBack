@@ -118,4 +118,16 @@ public class ServiceVoto implements IServiceVoto {
     return repositoryYaVoto.existsByCedulaAndIdEleccion(cedula, idEleccion);
   }
 
+  @Override
+  @Transactional
+  public void registrarYaVoto(String cedula, Long idEleccion, java.time.LocalDateTime timestamp) {
+    if (!repositoryYaVoto.existsByCedulaAndIdEleccion(cedula, idEleccion)) {
+      repositoryYaVoto.save(YaVoto.builder()
+          .cedula(cedula)
+          .idEleccion(idEleccion)
+          .timestampVoto(timestamp != null ? timestamp : java.time.LocalDateTime.now())
+          .build());
+    }
+  }
+
 }

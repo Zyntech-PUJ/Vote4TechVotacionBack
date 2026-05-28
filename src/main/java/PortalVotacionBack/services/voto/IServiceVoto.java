@@ -9,4 +9,6 @@ public interface IServiceVoto {
 
   boolean yaVoto(String cedula, Long idEleccion);
 
+  void registrarYaVoto(String cedula, Long idEleccion, java.time.LocalDateTime timestamp);
+
 }

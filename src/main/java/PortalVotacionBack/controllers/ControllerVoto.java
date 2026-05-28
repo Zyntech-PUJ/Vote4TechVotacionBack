@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import PortalVotacionBack.dtos.voto.CreateVotoDTO;
+import PortalVotacionBack.dtos.voto.RegistrarYaVotoDTO;
 import PortalVotacionBack.dtos.voto.ResponseVotoDTO;
 import PortalVotacionBack.services.voto.IServiceVoto;
 import io.swagger.v3.oas.annotations.Operation;
@@ -35,6 +36,13 @@ public class ControllerVoto {
       @PathVariable String cedula,
       @PathVariable Long idEleccion) {
     return ResponseEntity.ok(serviceVoto.yaVoto(cedula, idEleccion));
+  }
+
+  @PostMapping("/registrar-ya-voto")
+  @Operation(summary = "Registrar ya-voto desde sistema externo (domicilio/urna) sin pasar por el flujo de voto")
+  public ResponseEntity<Void> registrarYaVoto(@RequestBody RegistrarYaVotoDTO dto) {
+    serviceVoto.registrarYaVoto(dto.getCedula(), dto.getIdEleccion(), dto.getTimestamp());
+    return ResponseEntity.ok().build();
   }
 
 }
